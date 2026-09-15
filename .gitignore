@@ -1,0 +1,17 @@
+# ---> ESP-IDF <---
+# Directory di build generata automaticamente
+build/
+sdkconfig
+sdkconfig.old
+
+# File di lock delle dipendenze
+dependencies.lock
+
+# File di configurazione di VS Code
+.vscode/
+
+# Altri file generati
+*.gcda
+*.gcno
+coverage.info
+coverage_report/

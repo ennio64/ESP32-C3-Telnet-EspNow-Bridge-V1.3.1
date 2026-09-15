@@ -1,0 +1,27 @@
+idf_component_register(
+    SRCS
+        main.c
+        serial_handler.c
+        tcp_server.c
+        wifi_manager.c
+        WiFiSelector.c
+        espnow_handler.c
+        nvs_storage.c
+        web_server.c
+        grblHAL_advanced.c
+    INCLUDE_DIRS
+        "."
+        "../include"
+    REQUIRES
+        nvs_flash
+        esp_netif
+        esp_event
+        freertos
+        esp_driver_uart
+        esp_driver_gpio
+        esp_timer
+        lwip
+        esp_wifi
+        esp_http_server
+        app_update
+)
