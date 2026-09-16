@@ -28,6 +28,11 @@ The UART bridge is protocol-agnostic: serial data can be exchanged between the c
 - [ESP-IDF Build Configuration](#esp-idf-build-configuration)
 - [Building from Source](#building-from-source)
 - [Precompiled Firmware](#precompiled-firmware)
+- [Firmware Flashing](#firmware-flashing)
+- [Windows Flash Tool](#windows-flash-tool)
+- [Linux / macOS Flash Tool](#linux--macos-flash-tool)
+- [Manual Flashing](#manual-flashing)
+- [Flash Without Global Erase](#flash-without-global-erase)
 - [WiFi Configuration](#wifi-configuration)
 - [Default WiFi Networks](#default-wifi-networks)
 - [Access Point Fallback](#access-point-fallback)
@@ -240,7 +245,7 @@ idf.py set-target esp32c3
 
 The project uses a custom partition table with OTA support.
 
-The ESP32-C3 flash configuration must be set to:
+The ESP32-C3 flash configuration must be:
 
 ```text
 Flash Size:
@@ -282,7 +287,19 @@ The resulting partition layout is:
 
 This provides two application partitions for OTA firmware updates.
 
-The application firmware is written to the active OTA partition.
+The precompiled firmware package writes the application image to:
+
+```text
+ota_0
+```
+
+at:
+
+```text
+0x00020000
+```
+
+OTA updates use the currently inactive OTA application partition according to the ESP-IDF OTA mechanism.
 
 The generated ESP-IDF partition table binary is:
 
@@ -370,72 +387,167 @@ firmware/
 ├── partition-table.bin
 ├── ESP32-C3-Serial-Bridge.bin
 ├── flash.bat
-├── flash_no_erase.bat
 └── flash.sh
 ```
+
+The Windows flashing tool combines both full-erase and no-global-erase operation into the same script.
+
+There is **no separate `flash_no_erase.bat` file** in the current firmware package.
+
+---
 
 ## Firmware Images
 
 | File | Flash Address | Description |
 |---|---:|---|
-| `bootloader.bin` | `0x0000` | ESP32-C3 bootloader |
-| `partition-table.bin` | `0x8000` | ESP-IDF partition table |
-| `ESP32-C3-Serial-Bridge.bin` | `0x20000` | Main application firmware |
+| `bootloader.bin` | `0x00000000` | ESP32-C3 bootloader |
+| `partition-table.bin` | `0x00008000` | ESP-IDF partition table |
+| `ESP32-C3-Serial-Bridge.bin` | `0x00020000` | Application firmware / OTA0 |
 
 The three binary files are intended to be used together as one firmware release.
 
 ---
 
-## Automatic Flashing Scripts
+# Firmware Flashing
 
 The firmware package provides flashing scripts for Windows and Linux/macOS.
 
-```text
-flash.bat
-flash_no_erase.bat
-flash.sh
-```
-
-### Windows — Complete Flash
-
-Run:
+The current scripts use **esptool 5.x syntax** through Python:
 
 ```text
-flash.bat
+python -m esptool
 ```
 
-The Windows complete-flash script:
-
-1. Checks that `esptool.py` is available.
-2. Uses `COM3` as the default serial port.
-3. Allows the user to enter another COM port.
-4. Checks the firmware files.
-5. Erases the complete ESP32-C3 flash.
-6. Flashes `bootloader.bin` at `0x0000`.
-7. Flashes `partition-table.bin` at `0x8000`.
-8. Flashes `ESP32-C3-Serial-Bridge.bin` at `0x20000`.
-
-Because the complete flash is erased, all NVS configuration is also erased.
-
-After flashing, the bridge starts with its default configuration.
-
----
-
-## Windows — Flash Without Erasing NVS
-
-Run:
-
-```text
-flash_no_erase.bat
-```
-
-This script does **not** execute:
+The scripts do not depend on the obsolete command names:
 
 ```text
 erase_flash
+write_flash
+chip_id
 ```
 
-It writes:
+The current esptool 5.x commands are:
+
+```text
+erase-flash
+write-flash
+```
+
+---
+
+# Windows Flash Tool
+
+The Windows flash tool is:
+
+```text
+flash.bat
+```
+
+The script has three operating modes:
+
+```text
+0 = FULL ERASE + FLASH
+1 = FLASH WITHOUT ERASE
+2 = QUIT
+```
+
+The same script is used for both complete installation and firmware update without a global flash erase.
+
+---
+
+## Windows Default COM Port
+
+The default serial port configured in the script is:
+
+```text
+COM10
+```
+
+The script allows another COM port to be entered at startup.
+
+For example:
+
+```text
+COM10
+COM3
+COM5
+```
+
+The default can be changed directly in the script if required:
+
+```bat
+set "PORT=COM10"
+```
+
+---
+
+## Windows — FULL ERASE + FLASH
+
+Start:
+
+```text
+flash.bat
+```
+
+Select:
+
+```text
+0
+```
+
+The script asks for explicit confirmation before erasing the complete flash.
+
+The operation performs:
+
+```text
+1. erase-flash
+2. write-flash bootloader
+3. write-flash partition table
+4. write-flash application
+```
+
+The addresses are:
+
+```text
+bootloader       0x00000000
+partition table  0x00008000
+application      0x00020000
+```
+
+The complete flash erase deletes:
+
+- NVS
+- WiFi configuration stored in NVS
+- pairing information
+- stored application configuration
+- existing firmware
+- all other flash data
+
+After a complete erase, the bridge starts from a clean flash configuration.
+
+---
+
+## Windows — FLASH WITHOUT GLOBAL ERASE
+
+Start:
+
+```text
+flash.bat
+```
+
+Select:
+
+```text
+1
+```
+
+This mode does **not** execute:
+
+```text
+erase-flash
+```
+
+The script still writes:
 
 ```text
 bootloader.bin
@@ -446,163 +558,359 @@ ESP32-C3-Serial-Bridge.bin
 at:
 
 ```text
-0x0000
-0x8000
-0x20000
+0x00000000
+0x00008000
+0x00020000
 ```
 
-The NVS area is not erased.
-
-This is the preferred procedure when updating the complete firmware image while preserving the configuration stored in NVS.
-
----
-
-## Linux / macOS
-
-Run:
-
-```bash
-./flash.sh
-```
-
-The script:
-
-1. Checks that `esptool.py` is available.
-2. Uses `/dev/ttyUSB0` as the default serial port.
-3. Allows the user to enter another serial port.
-4. Checks the firmware files.
-5. Erases the complete ESP32-C3 flash.
-6. Flashes `bootloader.bin` at `0x0000`.
-7. Flashes `partition-table.bin` at `0x8000`.
-8. Flashes `ESP32-C3-Serial-Bridge.bin` at `0x20000`.
-
-The Linux/macOS script performs a complete flash erase and therefore also erases NVS.
-
----
-
-## Installing esptool
-
-The supplied scripts require `esptool.py`.
-
-If it is not installed:
-
-```bash
-pip install esptool
-```
-
-The scripts check for `esptool.py` before starting the flashing process.
-
----
-
-## Manual Flashing
-
-The same flashing procedure can be performed manually.
-
-First erase the complete flash:
-
-```bash
-esptool.py --chip esp32c3 --port <PORT> erase_flash
-```
-
-Flash the bootloader:
-
-```bash
-esptool.py --chip esp32c3 --port <PORT> write_flash 0x0 bootloader.bin
-```
-
-Flash the partition table:
-
-```bash
-esptool.py --chip esp32c3 --port <PORT> write_flash 0x8000 partition-table.bin
-```
-
-Flash the application:
-
-```bash
-esptool.py --chip esp32c3 --port <PORT> write_flash 0x20000 ESP32-C3-Serial-Bridge.bin
-```
-
-Replace `<PORT>` with the serial port used by the ESP32-C3.
-
-Examples:
+Because the NVS partition starts at:
 
 ```text
-Windows:
-COM3
-
-Linux:
-/dev/ttyUSB0
+0x00009000
 ```
+
+and ends before:
+
+```text
+0x0000F000
+```
+
+the specified firmware images do not overlap the NVS partition.
+
+Therefore the NVS configuration is not intentionally erased by this procedure.
+
+However, this mode is **not equivalent to an OTA update**. It directly replaces the bootloader, partition table and OTA0 application image.
+
+For normal runtime firmware upgrades where possible, the Web UI OTA mechanism is preferable because it follows the ESP-IDF OTA partition-selection mechanism.
 
 ---
 
-## Manual Flashing Without Erasing NVS
+## Windows Flash Tool Verification
 
-To update the bootloader, partition table and application without erasing NVS:
-
-```bash
-esptool.py --chip esp32c3 --port <PORT> write_flash 0x0 bootloader.bin
-```
-
-```bash
-esptool.py --chip esp32c3 --port <PORT> write_flash 0x8000 partition-table.bin
-```
-
-```bash
-esptool.py --chip esp32c3 --port <PORT> write_flash 0x20000 ESP32-C3-Serial-Bridge.bin
-```
-
-No `erase_flash` command is required.
-
-The NVS partition remains at:
+The current Windows `flash.bat` has been tested on an ESP32-C3 using:
 
 ```text
-0x9000
+COM10
 ```
 
-and is therefore preserved.
+Hardware detected during the test:
+
+```text
+ESP32-C3
+Revision: v0.4
+Flash: 4 MB XMC
+Crystal: 40 MHz
+USB mode: USB-Serial/JTAG
+```
+
+The tested full-flash operation successfully completed:
+
+```text
+erase-flash
+bootloader
+partition-table
+application
+```
+
+with hash verification successful for all three firmware images.
+
+The application image used during the test was approximately:
+
+```text
+975 KB
+```
+
+The Windows flashing procedure is therefore the reference implementation for the current firmware package.
 
 ---
 
-## Important: Flash Erase
+# Linux / macOS Flash Tool
 
-The complete flashing scripts execute:
-
-```text
-erase_flash
-```
-
-before writing the firmware.
-
-This erases the complete ESP32-C3 flash, including the configuration stored in NVS.
-
-Use:
-
-```text
-flash.bat
-```
-
-or:
+The Linux/macOS script is:
 
 ```text
 flash.sh
 ```
 
-when a completely clean installation is required.
+Make it executable:
 
-Use:
-
-```text
-flash_no_erase.bat
+```bash
+chmod +x flash.sh
 ```
 
-when the existing NVS configuration should be preserved.
+Run it:
+
+```bash
+./flash.sh
+```
+
+The script uses:
+
+```text
+/dev/ttyUSB0
+```
+
+as the default serial port and allows the user to enter another port.
+
+The script provides the same logical operations as the Windows tool:
+
+```text
+0 = FULL ERASE + FLASH
+1 = FLASH WITHOUT ERASE
+2 = QUIT
+```
+
+The Linux/macOS script uses the modern esptool 5.x commands:
+
+```text
+erase-flash
+write-flash
+```
+
+and invokes esptool through Python.
+
+### Verification status
+
+The Linux/macOS script is aligned with the tested Windows flashing procedure, but it has **not been hardware-tested in the current development environment**.
+
+Therefore the Windows flashing tool is the currently verified reference.
 
 ---
 
-## First Boot After Flashing
+# Installing esptool
 
-After flashing, the ESP32-C3 starts the Serial Bridge firmware.
+The firmware scripts require the Python `esptool` package.
+
+Install it with:
+
+```bash
+python -m pip install esptool
+```
+
+or, on systems where `python3` is the preferred command:
+
+```bash
+python3 -m pip install esptool
+```
+
+Verify the installation:
+
+```bash
+python -m esptool version
+```
+
+or:
+
+```bash
+python3 -m esptool version
+```
+
+The current firmware scripts use the module invocation form:
+
+```text
+python -m esptool
+```
+
+rather than depending on a globally installed executable named:
+
+```text
+esptool.py
+```
+
+---
+
+# Manual Flashing
+
+The current esptool 5.x syntax for a complete flash installation is:
+
+```bash
+python -m esptool --chip esp32c3 --port <PORT> erase-flash
+```
+
+Then flash the bootloader:
+
+```bash
+python -m esptool --chip esp32c3 --port <PORT> write-flash 0x00000000 bootloader.bin
+```
+
+Flash the partition table:
+
+```bash
+python -m esptool --chip esp32c3 --port <PORT> write-flash 0x00008000 partition-table.bin
+```
+
+Flash the application:
+
+```bash
+python -m esptool --chip esp32c3 --port <PORT> write-flash 0x00020000 ESP32-C3-Serial-Bridge.bin
+```
+
+Replace:
+
+```text
+<PORT>
+```
+
+with the serial port used by the ESP32-C3.
+
+Examples:
+
+```text
+Windows:
+COM10
+
+Linux:
+ /dev/ttyUSB0
+```
+
+The current Windows development setup uses:
+
+```text
+COM10
+```
+
+---
+
+# Flash Without Global Erase
+
+To update the firmware images without executing a global flash erase:
+
+```bash
+python -m esptool --chip esp32c3 --port <PORT> write-flash 0x00000000 bootloader.bin
+```
+
+```bash
+python -m esptool --chip esp32c3 --port <PORT> write-flash 0x00008000 partition-table.bin
+```
+
+```bash
+python -m esptool --chip esp32c3 --port <PORT> write-flash 0x00020000 ESP32-C3-Serial-Bridge.bin
+```
+
+No:
+
+```text
+erase-flash
+```
+
+command is executed.
+
+The NVS partition is located at:
+
+```text
+0x00009000
+```
+
+and has a size of:
+
+```text
+0x6000
+```
+
+Therefore:
+
+```text
+NVS:
+0x00009000 - 0x0000EFFF
+```
+
+The firmware images written by the no-global-erase procedure do not overlap this range.
+
+The NVS contents are therefore preserved by the intended flash layout.
+
+> **Important:** `write-flash` may erase the flash sectors required by each individual image before writing them. "Without erase" means **without a global `erase-flash` operation**, not "without any flash-sector erase".
+
+---
+
+# Important OTA Consideration
+
+The project uses:
+
+```text
+ota_0
+ota_1
+```
+
+for OTA operation.
+
+The precompiled manual flashing procedure writes the application image to:
+
+```text
+ota_0
+0x00020000
+```
+
+The ESP-IDF OTA mechanism, however, manages which OTA partition is selected for normal boot.
+
+Therefore direct flashing of `ota_0` without changing OTA selection is different from performing an OTA update through the Web UI.
+
+For normal firmware upgrades, the recommended method is:
+
+```text
+Web UI → OTA Update
+```
+
+The direct flash scripts are intended primarily for:
+
+- initial installation
+- recovery
+- complete firmware replacement
+- controlled development/testing
+- cases where direct flashing of OTA0 is explicitly desired
+
+---
+
+# Flash Layout
+
+The relevant flash layout is:
+
+```text
+0x00000000
+┌─────────────────────────────┐
+│ Bootloader                  │
+└─────────────────────────────┘
+
+0x00008000
+┌─────────────────────────────┐
+│ Partition Table             │
+└─────────────────────────────┘
+
+0x00009000
+┌─────────────────────────────┐
+│ NVS                         │
+│ 0x6000 bytes                │
+└─────────────────────────────┘
+
+0x0000F000
+┌─────────────────────────────┐
+│ OTA Data                    │
+│ 0x2000 bytes                │
+└─────────────────────────────┘
+
+0x00011000
+┌─────────────────────────────┐
+│ PHY Init                    │
+│ 0x1000 bytes                │
+└─────────────────────────────┘
+
+0x00020000
+┌─────────────────────────────┐
+│ OTA 0 / Application         │
+│ 0x1D0000 bytes              │
+└─────────────────────────────┘
+
+0x001F0000
+┌─────────────────────────────┐
+│ OTA 1 / Application         │
+│ 0x1D0000 bytes              │
+└─────────────────────────────┘
+```
+
+---
+
+# First Boot After Flashing
+
+After a complete flash erase and firmware installation, the ESP32-C3 starts the Serial Bridge firmware.
 
 If no configured WiFi Station network is available, the bridge provides its default Access Point:
 
@@ -782,9 +1090,9 @@ ota_0
 ota_1
 ```
 
-The currently inactive application partition is used for the new firmware image.
+The currently inactive application partition is used for the new firmware image according to the ESP-IDF OTA mechanism.
 
-OTA does not erase the complete flash and therefore does not intentionally erase the NVS configuration.
+OTA does not erase the complete flash and does not intentionally erase the NVS configuration.
 
 ---
 
@@ -1749,6 +2057,13 @@ This feature can be used to return the controller to a known state when a Telnet
 
 The bridge stores persistent configuration using ESP-IDF NVS.
 
+The NVS partition is:
+
+```text
+Offset: 0x00009000
+Size:   0x00006000
+```
+
 Stored configuration includes items such as:
 
 - WiFi configuration
@@ -1950,7 +2265,7 @@ POST /update
 
 The Web UI uses this endpoint for OTA firmware updates.
 
-The OTA endpoint is separate from the complete-flash procedure described in the firmware flashing section.
+The OTA endpoint is separate from the direct esptool flashing procedure described in the firmware flashing section.
 
 ---
 
@@ -2019,7 +2334,6 @@ ESP32-C3-Telnet-EspNow-Bridge-V1.3.1/
 │   ├── partition-table.bin
 │   ├── ESP32-C3-Serial-Bridge.bin
 │   ├── flash.bat
-│   ├── flash_no_erase.bat
 │   └── flash.sh
 │
 ├── examples/
@@ -2220,31 +2534,84 @@ If the firmware was flashed using:
 flash.bat
 ```
 
-or:
+and operation:
 
 ```text
-flash.sh
+0
 ```
 
-the complete flash was erased first.
+was selected, the complete flash was erased.
 
 This also erases NVS.
 
 Reconfigure the bridge using the Web UI.
 
-To preserve NVS during a manual firmware update, use:
+To update the firmware without performing a global erase, start:
 
 ```text
-flash_no_erase.bat
+flash.bat
 ```
 
-or flash the images manually without using:
+and select:
 
 ```text
-erase_flash
+1
 ```
 
-OTA updates do not use the complete-flash procedure.
+This preserves the NVS partition because the firmware images written by the script do not overlap the NVS address range.
+
+For normal OTA firmware upgrades, use the Web UI OTA mechanism.
+
+---
+
+## The Windows flash tool reports that esptool is missing
+
+Verify Python:
+
+```powershell
+python --version
+```
+
+Then verify esptool:
+
+```powershell
+python -m esptool version
+```
+
+If necessary:
+
+```powershell
+python -m pip install esptool
+```
+
+The flash tool does not require the obsolete standalone:
+
+```text
+esptool.py
+```
+
+command.
+
+---
+
+## The ESP32-C3 cannot be detected on the selected COM port
+
+Check:
+
+- USB cable
+- USB connection
+- Device Manager
+- selected COM port
+- ESP32-C3 USB-Serial/JTAG connection
+- whether another application has the COM port open
+
+The currently tested Windows setup uses:
+
+```text
+COM10
+```
+
+The flash tool allows another COM port to be entered.
 
 ---
 
@@ -2391,13 +2758,19 @@ This allows the Bridge to adapt the same logical ESP-NOW protocol to external ha
 | Maximum ESP-NOW peers total | 16 |
 | Flash size | 4 MB |
 | Partition table | Custom `partitions.csv` |
+| NVS offset | `0x00009000` |
+| NVS size | `0x00006000` |
 | OTA partitions | `ota_0` + `ota_1` |
+| OTA0 address | `0x00020000` |
+| OTA1 address | `0x001F0000` |
 | AP SSID | ESP32-C3-Serial-Bridge |
 | AP password | 12345678 |
 | AP channel | 6 |
 | AP IP | 192.168.4.1 |
 | ESP-NOW GPIO polarity | Active HIGH |
 | ESP-NOW GPIO polarity mask | `0` |
+| Windows default COM port | `COM10` |
+| Linux/macOS default port | `/dev/ttyUSB0` |
 
 ---
 
@@ -2501,26 +2874,85 @@ The Telnet implementation is intentionally not changed as part of this README.
 
 ## Flashing
 
-The complete firmware flashing scripts:
+The current firmware package contains:
 
 ```text
 flash.bat
 flash.sh
 ```
 
-erase the complete ESP32-C3 flash before installing the firmware.
-
-Existing NVS configuration is therefore removed.
-
-The no-erase Windows script:
+The Windows script provides:
 
 ```text
-flash_no_erase.bat
+0 = FULL ERASE + FLASH
+1 = FLASH WITHOUT ERASE
+2 = QUIT
 ```
 
-does not erase the flash and preserves the NVS configuration.
+The Windows script has been tested with an ESP32-C3 on:
 
-OTA firmware updates are separate and do not use the complete-flash procedure.
+```text
+COM10
+```
+
+using esptool 5.1.
+
+The Linux/macOS script follows the same procedure but has not been hardware-tested in the current development environment.
+
+---
+
+## Full Erase
+
+A full erase is performed only when operation `0` is selected in the Windows flash tool or when the equivalent `erase-flash` command is executed manually.
+
+A full erase deletes the complete flash, including NVS.
+
+---
+
+## Flash Without Global Erase
+
+Operation `1` in the Windows flash tool does not execute:
+
+```text
+erase-flash
+```
+
+The firmware images are written to:
+
+```text
+0x00000000
+0x00008000
+0x00020000
+```
+
+The NVS partition is located at:
+
+```text
+0x00009000
+```
+
+and is not part of the written firmware image ranges.
+
+NVS is therefore preserved by the intended flashing layout.
+
+This operation is different from an OTA update because it directly writes the OTA0 application partition.
+
+---
+
+## OTA
+
+OTA updates are handled by the ESP-IDF OTA mechanism.
+
+The application partitions are:
+
+```text
+ota_0
+ota_1
+```
+
+The OTA mechanism selects the appropriate application partition for the next boot.
+
+The Web UI OTA procedure does not perform a complete flash erase.
 
 ---
 
@@ -2532,6 +2964,12 @@ The project uses the custom partition table:
 partitions.csv
 ```
 
+The generated binary is:
+
+```text
+partition-table.bin
+```
+
 The application partitions are:
 
 ```text
@@ -2539,16 +2977,16 @@ ota_0
 ota_1
 ```
 
-The generated binary is:
+The direct precompiled firmware flashing procedure writes the application image to:
 
 ```text
-partition-table.bin
+0x00020000
 ```
 
-The application firmware is flashed at:
+which corresponds to:
 
 ```text
-0x20000
+ota_0
 ```
 
 ---
@@ -2616,3 +3054,35 @@ The ESP32-C3 Serial Bridge is an ESP-IDF-based UART-to-WiFi bridge providing:
 The project is designed to remain useful as a general-purpose serial bridge while providing additional ESP-NOW and GrblHAL functionality for supported applications.
 
 The legacy Pendant communication and the new ESP-NOW application protocol are intentionally maintained as separate protocol layers.
+
+## Flashing Tool Status
+
+Current firmware package:
+
+```text
+flash.bat
+flash.sh
+```
+
+Windows:
+
+```text
+flash.bat
+```
+
+supports:
+
+```text
+0 = FULL ERASE + FLASH
+1 = FLASH WITHOUT ERASE
+2 = QUIT
+```
+
+The Windows flashing procedure has been verified on the ESP32-C3 hardware using:
+
+```text
+COM10
+esptool 5.1
+```
+
+The Linux/macOS script is provided as the corresponding cross-platform implementation but remains **untested on hardware in the current development environment**.
